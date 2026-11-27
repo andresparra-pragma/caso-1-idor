@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Plataforma Académica · Iniciar sesión</title>
+    <link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="login-wrap">
+    <main class="login">
+        <div class="marca">
+            <div class="logo" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c3 2 9 2 12 0v-5"/></svg>
+            </div>
+            Plataforma Académica
+        </div>
+        <h1>Inicia sesión</h1>
+        <p class="sub">Gestiona los cursos y estudiantes de tu colegio.</p>
+
+        <form method="post" action="/login" id="form">
+            <input type="hidden" name="_csrf" id="csrf">
+            <label for="username">Usuario</label>
+            <input type="text" id="username" name="username" autocomplete="username" autofocus>
+            <label for="password">Contraseña</label>
+            <input type="password" id="password" name="password" autocomplete="current-password">
+            <button type="submit">Ingresar</button>
+        </form>
+        <div id="aviso"></div>
+        <div class="pie">Entorno local de demostración · datos ficticios</div>
+    </main>
+</div>
+<script>
+    function cookie(nombre) {
+        const m = document.cookie.match('(?:^|; )' + nombre + '=([^;]*)');
+        return m ? decodeURIComponent(m[1]) : '';
+    }
+    document.getElementById('form').addEventListener('submit', () => {
+        document.getElementById('csrf').value = cookie('XSRF-TOKEN');
+    });
+    const params = new URLSearchParams(location.search);
+    const aviso = document.getElementById('aviso');
+    if (params.has('error')) { aviso.className = 'aviso error'; aviso.textContent = 'Usuario o contraseña incorrectos.'; }
+    if (params.has('salir')) { aviso.className = 'aviso info'; aviso.textContent = 'Cerraste sesión.'; }
+</script>
+</body>
+</html>

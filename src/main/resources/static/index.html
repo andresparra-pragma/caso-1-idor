@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Plataforma Académica</title>
+    <link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="nav">
+    <div class="marca">
+        <div class="logo" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c3 2 9 2 12 0v-5"/></svg>
+        </div>
+        Plataforma Académica
+    </div>
+    <div class="selector-colegio">
+        <label for="colegio">Colegio</label>
+        <select id="colegio"></select>
+    </div>
+    <div class="usuario">
+        <div class="avatar" id="avatar"></div>
+        <div><span id="nombre"></span><small id="cargo" style="display:block;color:var(--gris);font-size:12px"></small></div>
+        <button class="btn-sec" id="salir" type="button">Cerrar sesión</button>
+    </div>
+</header>
+
+<main class="contenido" id="vista"></main>
+
+<script src="presentador.js"></script>
+<script>
+    const vista = document.getElementById('vista');
+    const selector = document.getElementById('colegio');
+    const nota = new Intl.NumberFormat('es-CO', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+    function el(tag, props, ...hijos) {
+        const n = document.createElement(tag);
+        Object.entries(props || {}).forEach(([k, v]) => { if (k === 'class') n.className = v; else n[k] = v; });
+        hijos.flat().forEach(h => n.append(h instanceof Node ? h : String(h)));
+        return n;
+    }
+    function cookie(nombre) {
+        const m = document.cookie.match('(?:^|; )' + nombre + '=([^;]*)');
+        return m ? decodeURIComponent(m[1]) : '';
+    }
+
+    /** Toda llamada a la API manda el colegio de la sesión en el header (lo que valida el API Gateway). */
+    async function api(ruta) {
+        const url = '/api/' + Demo.modo() + ruta;
+        const header = 'DANE-' + selector.value;
+        const res = await fetch(url, { headers: { 'X-Colegio': header }, cache: 'no-store' });
+        let data = null;
+        try { data = await res.json(); } catch (e) { /* sin cuerpo */ }
+        Demo.registrarPeticion({ metodo: 'GET', url, header, status: res.status, data });
+        return { status: res.status, data };
+    }
+
+    function mensaje(titulo, texto) {
+        vista.replaceChildren(el('div', { class: 'mensaje' }, el('h2', {}, titulo), el('p', {}, texto)));
+    }
+    function errorHttp(status) {
+        if (status === 403) mensaje('No tienes acceso a esta información', 'Si crees que es un error, contacta a la rectoría de tu colegio.');
+        else if (status === 404) mensaje('No encontramos lo que buscas', 'El recurso no existe.');
+        else if (status === 401) location.replace('/login.html');
+        else mensaje('Ocurrió un error', 'Intenta de nuevo en unos minutos.');
+    }
+
+    async function verCursos(dane) {
+        vista.replaceChildren(el('p', { class: 'migas' }, 'Cargando…'));
+        const { status, data } = await api('/colegios/' + encodeURIComponent(dane) + '/cursos');
+        if (status !== 200) return errorHttp(status);
+        const total = data.cursos.reduce((s, c) => s + c.estudiantes, 0);
+        const filas = data.cursos.map(c => el('tr', {},
+            el('td', {}, c.codigo), el('td', {}, c.nombre), el('td', {}, el('span', { class: 'etiqueta' }, c.grado)),
+            el('td', {}, c.docente), el('td', { class: 'num' }, c.estudiantes),
+            el('td', { class: 'num' }, el('a', { href: '#/cursos/' + c.codigo + '/estudiantes' }, 'Ver estudiantes'))));
+        vista.replaceChildren(
+            el('div', { class: 'migas' }, 'Inicio / Cursos'),
+            el('div', { class: 'encabezado' },
+                el('div', {}, el('h1', {}, 'Cursos'),
+                    el('p', {}, data.colegio.nombre + ' · ' + data.colegio.ciudad + ' · DANE ' + data.colegio.dane)),
+                el('div', { class: 'resumen' },
+                    el('div', {}, el('strong', {}, data.cursos.length), 'cursos'),
+                    el('div', {}, el('strong', {}, total), 'estudiantes'))),
+            el('div', { class: 'tabla-wrap' }, el('table', {},
+                el('thead', {}, el('tr', {}, el('th', {}, 'Código'), el('th', {}, 'Curso'), el('th', {}, 'Grado'),
+                    el('th', {}, 'Docente'), el('th', { class: 'num' }, 'Estudiantes'), el('th', {}, ''))),
+                el('tbody', {}, filas))));
+    }
+
+    async function verEstudiantes(codigo) {
+        vista.replaceChildren(el('p', { class: 'migas' }, 'Cargando…'));
+        const { status, data } = await api('/cursos/' + encodeURIComponent(codigo) + '/estudiantes');
+        if (status !== 200) return errorHttp(status);
+        const filas = data.estudiantes.map(e => el('tr', {},
+            el('td', {}, e.nombre), el('td', {}, e.documento), el('td', {}, e.acudiente),
+            el('td', {}, e.correoAcudiente), el('td', { class: 'num' }, nota.format(e.promedio))));
+        vista.replaceChildren(
+            el('div', { class: 'migas' },
+                el('a', { href: '#/colegios/' + data.colegio.dane + '/cursos' }, 'Cursos'), ' / ', data.curso.nombre + ' ' + data.curso.grado),
+            el('div', { class: 'encabezado' },
+                el('div', {}, el('h1', {}, data.curso.nombre + ' · ' + data.curso.grado),
+                    el('p', {}, 'Curso ' + data.curso.codigo + ' · ' + data.colegio.nombre + ' · ' + data.curso.docente)),
+                el('div', { class: 'resumen' },
+                    el('div', {}, el('strong', {}, data.estudiantes.length), 'estudiantes'),
+                    el('div', {}, el('strong', {}, nota.format(data.promedioCurso)), 'promedio del curso'))),
+            el('div', { class: 'tabla-wrap' }, el('table', {},
+                el('thead', {}, el('tr', {}, el('th', {}, 'Estudiante'), el('th', {}, 'Documento'), el('th', {}, 'Acudiente'),
+                    el('th', {}, 'Correo del acudiente'), el('th', { class: 'num' }, 'Promedio'))),
+                el('tbody', {}, filas))));
+    }
+
+    function enrutar() {
+        const h = location.hash;
+        let m;
+        if ((m = h.match(/^#\/colegios\/([^/]+)\/cursos$/))) return verCursos(decodeURIComponent(m[1]));
+        if ((m = h.match(/^#\/cursos\/([^/]+)\/estudiantes$/))) return verEstudiantes(decodeURIComponent(m[1]));
+        location.replace('#/colegios/' + selector.value + '/cursos');
+    }
+
+    (async () => {
+        const r = await fetch('/api/me', { cache: 'no-store' });
+        if (r.status === 401) { location.replace('/login.html'); return; }
+        const yo = await r.json();
+        document.getElementById('nombre').textContent = yo.nombre;
+        document.getElementById('cargo').textContent = yo.cargo;
+        document.getElementById('avatar').textContent = yo.nombre.split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase();
+        let guardado = null;
+        try { guardado = sessionStorage.getItem('colegio'); } catch (e) { /* sin almacenamiento */ }
+        yo.colegios.forEach(c => selector.append(el('option', { value: c.dane }, c.nombre)));
+        if (guardado && yo.colegios.some(c => c.dane === guardado)) selector.value = guardado;
+        selector.addEventListener('change', () => {
+            try { sessionStorage.setItem('colegio', selector.value); } catch (e) { /* ignorar */ }
+            location.hash = '#/colegios/' + selector.value + '/cursos';
+        });
+        window.addEventListener('hashchange', enrutar);
+        Demo.alCambiarModo(enrutar);
+        enrutar();
+    })();
+
+    document.getElementById('salir').addEventListener('click', async () => {
+        await fetch('/logout', { method: 'POST', headers: { 'X-XSRF-TOKEN': cookie('XSRF-TOKEN') } });
+        location.replace('/login.html?salir');
+    });
+</script>
+</body>
+</html>
