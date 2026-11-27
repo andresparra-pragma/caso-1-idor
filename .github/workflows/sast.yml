@@ -1,0 +1,45 @@
+# SAST con Fluid Attacks (open source, sin cuenta).
+# Este repo es vulnerable a propósito, así que el escaneo REPORTA pero no bloquea:
+# los hallazgos quedan en la pestaña Security → Code scanning.
+# Pregunta para la charla: ¿un SAST detecta un IDOR? Es lógica de autorización, no un patrón de código.
+name: SAST
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write   # para publicar los hallazgos en la pestaña Security
+
+jobs:
+  fluid-sast:
+    name: Fluid Attacks SAST
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Analizar el código con Fluid Attacks
+        id: scan
+        # Fijada por SHA y no por etiqueta: una etiqueta se puede mover, un commit no.
+        # Modo completo (por defecto): no usa la acción de terceros que la versión diff necesita.
+        uses: fluidattacks/sast-action@bff64d57fdf98653f41f55922c1b0b472dd6a954 # 1.3.0
+        with:
+          scan_config_path: .github/fluid-sast.yaml
+
+      - name: Publicar hallazgos en la pestaña Security
+        if: always() && steps.scan.outputs.sarif_file != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: ${{ steps.scan.outputs.sarif_file }}
+          category: fluid-attacks-sast
+
+      - name: Resumen
+        if: always()
+        run: |
+          echo "### Fluid Attacks SAST" >> "$GITHUB_STEP_SUMMARY"
+          echo "Vulnerabilidades encontradas: \`${{ steps.scan.outputs.vulnerabilities_found }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Detalle en **Security → Code scanning**." >> "$GITHUB_STEP_SUMMARY"

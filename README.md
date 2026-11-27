@@ -96,6 +96,17 @@ Abajo a la derecha hay una **barra de presentador** (no es parte de la plataform
 15 tests: el ataque en la versión vulnerable (`IdorFlujoTest`), la corrección (DANE distinto, curso ajeno, curso
 inexistente, header ausente, ambiguo o inválido, fail closed, auditoría) y el saneamiento del log (`AuditoriaTest`).
 
+## SAST con Fluid Attacks
+
+[`.github/workflows/sast.yml`](.github/workflows/sast.yml) analiza el código con
+[`fluidattacks/sast-action`](https://github.com/fluidattacks/sast-action) (open source, sin cuenta) en cada push a
+`main` y en cada PR. Como este repo es vulnerable a propósito, el escaneo **reporta pero no bloquea**: los hallazgos
+quedan en **Security → Code scanning**.
+
+Una buena pregunta para la charla: **¿un SAST detecta un IDOR?** Un IDOR es lógica de autorización ("¿este curso es
+de este colegio?"), no un patrón de código peligroso. Para atraparlo hacen falta pruebas de autorización (como los
+tests de este repo), DAST con usuarios distintos o revisión de código.
+
 ## Estructura
 
 ```

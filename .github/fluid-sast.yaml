@@ -1,0 +1,11 @@
+# Configuración del escáner SAST de Fluid Attacks (fluidattacks/sast-action)
+language: ES
+# strict: el escáner sale con código 1 si encuentra vulnerabilidades; la acción lo expone en el
+# output "vulnerabilities_found". En este repo solo se reporta: no se bloquea nada.
+strict: true
+output:
+  file_path: .fluidattacks-sast-results.sarif
+  format: SARIF
+sast:
+  include:
+    - src/
