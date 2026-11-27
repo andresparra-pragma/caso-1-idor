@@ -1,121 +1,107 @@
-# Caso 1 · IDOR (control de acceso roto)
+# Caso 1: ver datos de otro colegio cambiando un número en la URL
 
-Demo de la charla **"Tu código tiene vulnerabilidades, y tus dependencias también"** (PragmaTalk).
+Este proyecto es una de las demos de la charla "Tu código tiene vulnerabilidades, y tus dependencias también" (PragmaTalk). Muestra un error de seguridad muy común, llamado IDOR, y cómo corregirlo.
 
-Una **plataforma académica para una red de colegios**: cada coordinador gestiona los cursos y estudiantes de *su*
-colegio. Un API Gateway valida el colegio del usuario… pero el backend confía en lo que viene en la **URL**.
-Cambiando un número, una coordinadora ve los cursos de otro colegio y, desde ahí, los datos de estudiantes menores
-de edad.
+> **Importante:** esta app tiene errores de seguridad a propósito, para poder mostrarlos. Úsala solo en tu computador. Funciona únicamente en `127.0.0.1` y todos los datos son inventados.
 
-> ⚠️ **App vulnerable a propósito.** Solo para aprender y demostrar. Escucha únicamente en `127.0.0.1`, usa datos
-> ficticios y no debe desplegarse en ningún servidor. El escenario está inspirado en hallazgos reales y anonimizado:
-> no contiene nombres de clientes, sistemas ni código real.
+## Qué pasa en esta app
 
-## El problema
+Es una plataforma para una red de colegios. Cada coordinador entra y ve los cursos y los estudiantes de su colegio.
+
+Lucía es coordinadora del Colegio San Martín. Cuando entra, la dirección del navegador se ve así:
 
 ```
-GET /api/vulnerable/colegios/105001000202/cursos     ← código DANE de OTRO colegio en la URL
-X-Colegio: DANE-111001000101                          ← el colegio de la usuaria (el gateway lo validó)
-→ 200 OK  (cursos del otro colegio)
+http://127.0.0.1:8082/#/colegios/111001000101/cursos
 ```
 
-1. **El gateway valida el header, no la URL.** El header `X-Colegio` es legítimo y pasa. El backend vulnerable usa el
-   código DANE del path.
-2. **El recurso no trae a su dueño.** `GET /cursos/{codigo}/estudiantes` recibe solo el código del curso, que no dice
-   de qué colegio es. Con un bucle sobre los códigos se enumeran los estudiantes de todos los colegios.
+Ese número largo es el código del colegio. El problema es que si Lucía lo cambia por el código de otro colegio, la app le muestra los cursos de ese otro colegio. Y desde ahí puede ver nombres, documentos, acudientes y notas de estudiantes que no son suyos.
 
-Categoría: **OWASP A01 – Broken Access Control** · **CWE-639** (Authorization Bypass Through User-Controlled Key).
+## Por qué pasa
 
-## La corrección
+La app sí pide usuario y contraseña. Además, antes de llegar al backend, cada petición pasa por un "portero" (un API Gateway) que revisa que Lucía tenga permiso sobre su colegio.
 
-| | Vulnerable (`/api/vulnerable`) | Seguro (`/api/seguro`) |
-|---|---|---|
-| `GET /colegios/{dane}/cursos` | usa el DANE de la URL | 403 si el DANE de la URL no es el del header validado |
-| `GET /cursos/{codigo}/estudiantes` | devuelve cualquier curso (404 si no existe) | verifica que el curso pertenezca al colegio del header; si no, si no existe o si no se puede verificar → 403 |
+El detalle está en qué revisa ese portero. El colegio que Lucía eligió viaja en un encabezado de la petición (`X-Colegio`), y el portero solo mira ese encabezado. No mira el número de la URL. El backend, en cambio, usa el número de la URL. Resultado: el portero aprueba la petición y el backend entrega datos de otro colegio.
 
-- **La identidad del recurso sale solo de lo que ya se validó** (header del gateway o token), nunca de la URL →
-  [`ColegioAutorizadoResolver`](src/main/java/co/pragma/talk/idor/seguridad/ColegioAutorizadoResolver.java):
-  403 si el header falta, es ambiguo o tiene formato inválido.
-- **Si el recurso no trae su dueño, se verifica la pertenencia** contra el servicio de matrículas →
-  [`CursosSeguroController`](src/main/java/co/pragma/talk/idor/web/CursosSeguroController.java).
-- **Fail closed:** si el servicio de verificación falla, se niega el acceso.
-- **Siempre el mismo 403**, exista o no el recurso, para no confirmar qué códigos son válidos.
-- **Auditoría** de cada acceso denegado, con los valores saneados para evitar *log injection* (CWE-117) →
-  [`Auditoria`](src/main/java/co/pragma/talk/idor/seguridad/Auditoria.java).
+Hay un segundo problema. Para ver los estudiantes de un curso basta con el código del curso (por ejemplo, `2001`), y ese código no dice de qué colegio es. Como los códigos son números seguidos, un script puede recorrerlos todos y descargar los estudiantes de todos los colegios.
 
-Compara [`CursosVulnerableController`](src/main/java/co/pragma/talk/idor/web/CursosVulnerableController.java) con
-[`CursosSeguroController`](src/main/java/co/pragma/talk/idor/web/CursosSeguroController.java).
+A este tipo de error se le llama **IDOR** (en español, referencia insegura a un objeto): el sistema sabe quién eres, pero no revisa si lo que pides es tuyo. Hace parte del "control de acceso roto", el riesgo número 1 de la lista OWASP Top 10.
 
-## Cómo correrla
+## Cómo se corrige
 
-Requisitos: **Java 17+**. No hace falta instalar Maven: el proyecto trae el Maven Wrapper.
+La versión segura hace cuatro cosas:
 
-```bash
-./mvnw spring-boot:run        # Linux / macOS
-.\mvnw.cmd spring-boot:run    # Windows
-```
+1. Toma el colegio de lo que ya se validó (el encabezado que aprobó el portero), nunca de la URL. Si los dos no coinciden, responde 403 (acceso denegado).
+2. Antes de mostrar estudiantes, confirma que el curso pertenece a ese colegio.
+3. Si no puede confirmarlo, por ejemplo porque el servicio que lo sabe está caído, también niega el acceso. Es mejor un error que entregar datos ajenos.
+4. Responde siempre el mismo mensaje, exista o no el curso, para no dar pistas. Y deja registro de cada intento.
 
-Abre <http://127.0.0.1:8082>.
+Para ver la diferencia en el código, compara estos dos archivos:
 
-| Usuario | Contraseña | Rol |
-|---|---|---|
-| `lucia` | `lucia123` | Coordinadora del Colegio San Martín (y del Colegio La Esperanza) |
-| `pedro` | `pedro123` | Rector del Colegio Los Andes |
+- [`CursosVulnerableController.java`](src/main/java/co/pragma/talk/idor/web/CursosVulnerableController.java) (con el error)
+- [`CursosSeguroController.java`](src/main/java/co/pragma/talk/idor/web/CursosSeguroController.java) (corregido)
 
-Abajo a la derecha hay una **barra de presentador** (no es parte de la plataforma):
+## Cómo probarlo
 
-- **Backend: Vulnerable / Seguro:** cambia contra qué implementación se hacen las peticiones.
-- **Ver petición:** la última llamada a la API, con el código de la URL frente al del header.
-- **Auditoría:** los accesos denegados que registró el backend, y un interruptor para simular la caída del servicio
-  de matrículas (fail closed).
+Necesitas Java 17 o más nuevo. No hace falta instalar Maven: el proyecto ya trae lo necesario.
 
-## Recorrido de la demo
-
-1. Inicia sesión como `lucia`. La URL es `#/colegios/111001000101/cursos`: los cursos del Colegio San Martín.
-2. Con el backend en **Vulnerable**, cambia en la barra de direcciones `111001000101` por **`105001000202`** → cursos
-   del **Colegio Los Andes**.
-3. **Ver estudiantes** del curso 2001 → documentos, acudientes, correos y notas de estudiantes de otro colegio.
-4. **Ver petición:** el header es el de San Martín (aprobado por el gateway); el DANE de la URL, el de Los Andes.
-5. Cambia el backend a **Seguro** → la misma pantalla responde **403**. **Auditoría** muestra cada intento.
-6. (Opcional) En Auditoría marca **Simular caída del servicio de matrículas** y abre un curso propio
-   (`#/cursos/1001/estudiantes`) → también 403: si no se puede verificar, no se entregan los datos.
-
-### Enumeración desde la terminal (Windows PowerShell)
+En Windows:
 
 ```powershell
-.\enumerar.ps1                 # vulnerable: estudiantes de los 3 colegios con la sesión de Lucía
-.\enumerar.ps1 -Modo seguro    # seguro: 403 en todo lo ajeno, incluso en cursos que no existen
+.\mvnw.cmd spring-boot:run
 ```
 
-## Tests
+En Linux o Mac:
+
+```bash
+./mvnw spring-boot:run
+```
+
+Abre <http://127.0.0.1:8082> y entra con alguno de estos usuarios:
+
+- `lucia` / `lucia123`: coordinadora del Colegio San Martín (y del Colegio La Esperanza).
+- `pedro` / `pedro123`: rector del Colegio Los Andes.
+
+Abajo a la derecha verás una barra oscura. No hace parte de la plataforma: sirve para la demo. Con ella cambias entre la versión con el error ("Vulnerable") y la corregida ("Seguro").
+
+Prueba esto, con la barra en "Vulnerable":
+
+1. Entra como `lucia`. Vas a ver los cursos del Colegio San Martín.
+2. En la dirección del navegador, cambia `111001000101` por `105001000202` y presiona Enter. Ahora ves los cursos del Colegio Los Andes, que no es el de Lucía.
+3. Entra a "Ver estudiantes" del curso 2001. Ves los estudiantes de otro colegio.
+4. Pulsa "Ver petición" en la barra. En amarillo está el código de la URL; en verde, el colegio de Lucía. El backend usó el amarillo.
+5. Ahora cambia la barra a "Seguro" y repite. Aparece "No tienes acceso a esta información". En "Auditoría" queda registrado cada intento.
+
+Si usas Windows, también puedes ver el problema desde la terminal. Este script recorre los códigos de curso con la sesión de Lucía:
+
+```powershell
+.\enumerar.ps1                 # versión con el error: trae estudiantes de los 3 colegios
+.\enumerar.ps1 -Modo seguro    # versión corregida: todo lo que no es de Lucía responde 403
+```
+
+## Pruebas automáticas
 
 ```bash
 ./mvnw test
 ```
 
-15 tests: el ataque en la versión vulnerable (`IdorFlujoTest`), la corrección (DANE distinto, curso ajeno, curso
-inexistente, header ausente, ambiguo o inválido, fail closed, auditoría) y el saneamiento del log (`AuditoriaTest`).
+Son 15 pruebas. Unas hacen el ataque contra la versión con el error y comprueban que funciona. Otras comprueban que la versión corregida lo bloquea en todos los casos: otro colegio, un curso ajeno, un curso que no existe, un encabezado que falta o viene mal, y el servicio de verificación caído.
 
-## SAST con Fluid Attacks
+Escribir el ataque como una prueba es la mejor forma de asegurarse de que el error no vuelva.
 
-[`.github/workflows/sast.yml`](.github/workflows/sast.yml) analiza el código con
-[`fluidattacks/sast-action`](https://github.com/fluidattacks/sast-action) (open source, sin cuenta) en cada push a
-`main` y en cada PR. Como este repo es vulnerable a propósito, el escaneo **reporta pero no bloquea**: los hallazgos
-quedan en **Security → Code scanning**.
+## Revisión del código con Fluid Attacks
 
-Una buena pregunta para la charla: **¿un SAST detecta un IDOR?** Un IDOR es lógica de autorización ("¿este curso es
-de este colegio?"), no un patrón de código peligroso. Para atraparlo hacen falta pruebas de autorización (como los
-tests de este repo), DAST con usuarios distintos o revisión de código.
+En cada cambio, GitHub revisa el código con la herramienta gratuita de [Fluid Attacks](https://github.com/fluidattacks/sast-action). Esto se llama SAST: analizar el código sin ejecutarlo, buscando patrones peligrosos. Lo que encuentra aparece en la pestaña **Security**, en "Code scanning".
 
-## Estructura
+Aquí no bloquea nada, porque el código con errores está a propósito.
 
-```
-src/main/java/co/pragma/talk/idor
-├── dominio/      datos ficticios: colegios, cursos, estudiantes, servicio de matrículas
-├── seguridad/    login, API Gateway simulado, resolver del colegio autorizado, auditoría
-└── web/          controllers vulnerable y seguro, /api/me y endpoints de la barra de presentador
-src/main/resources/static   la plataforma (login, cursos, estudiantes) y la barra de presentador
-enumerar.ps1                script de enumeración para la demo
-```
+Una pregunta interesante: ¿esta herramienta detecta el IDOR? Probablemente no. Un IDOR no es un patrón de código peligroso, es una regla de negocio que falta ("¿este curso es de este colegio?"). Para encontrarlo sirven las pruebas automáticas como las de este proyecto, las pruebas con usuarios distintos sobre la app funcionando y la revisión de código entre personas.
 
-Stack: Spring Boot 3.5 · Spring Security · Java 17.
+## Qué hay en cada carpeta
+
+- `src/main/java/.../dominio`: los datos inventados (colegios, cursos, estudiantes).
+- `src/main/java/.../seguridad`: el login, el "portero" simulado, la lectura del colegio autorizado y el registro de intentos.
+- `src/main/java/.../web`: los controladores con el error y corregidos.
+- `src/main/resources/static`: las pantallas de la plataforma y la barra de la demo.
+- `enumerar.ps1`: el script de la demo.
+
+Hecho con Spring Boot 3.5, Spring Security y Java 17.
